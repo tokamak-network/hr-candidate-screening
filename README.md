@@ -86,3 +86,4 @@ Optional columns:
 - `resume_full_text`
 
 `job.md` is freeform text used to match keywords to repo languages/topics.
+- Updated by Jaden (2026-02-18)
