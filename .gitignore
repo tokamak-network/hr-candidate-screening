@@ -19,3 +19,5 @@ __pycache__/
 *.crt
 *.pfx
 *.p12
+/AI_Agent_Loop_Appendix.docx.md
+/AI_Agent_Loop_Guide_v3.docx.md
