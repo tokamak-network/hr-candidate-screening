@@ -145,3 +145,4 @@ If any are added later, update this section.
 
 - No ML training or model-based scoring in the current MVP.
 - No advanced analytics beyond explicit GitHub evidence.
+
