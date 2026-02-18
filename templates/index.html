@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GitHub Candidate Screening</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=IBM+Plex+Serif:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <div class="brand">Layer2 Screening</div>
+        <h1>GitHub-Based Candidate Scoring</h1>
+        <p>
+          Upload CV PDFs. We extract GitHub profile links and score candidates
+          deterministically from repository evidence.
+        </p>
+      </header>
+
+      <section class="panel">
+        <form action="/run" method="post" enctype="multipart/form-data">
+          <div class="field">
+            <label for="cv_files">CV PDFs</label>
+            <input id="cv_files" name="cv_files" type="file" accept="application/pdf" multiple required />
+            <p class="hint">Only GitHub profile links like github.com/username are accepted.</p>
+          </div>
+
+          <div class="grid">
+            <div class="field">
+              <label for="job_text">Job description</label>
+              <textarea id="job_text" name="job_text" rows="6" placeholder="Paste the role requirements here..."></textarea>
+              <p class="hint">Optional if you want to use the existing job.md.</p>
+            </div>
+
+            <div class="field">
+              <label class="inline">
+                <input type="checkbox" name="use_existing_job" checked />
+                Use existing job.md
+              </label>
+              <label for="config_path">Config path</label>
+              <input id="config_path" name="config_path" type="text" value="config.yml" />
+              <label for="batch_size">Batch size</label>
+              <input id="batch_size" name="batch_size" type="number" min="1" placeholder="20" />
+              <p class="hint">Adjust weights and limits in config.yml.</p>
+            </div>
+          </div>
+
+          {% if error %}
+          <div class="alert">{{ error }}</div>
+          {% endif %}
+
+          {% if missing %}
+          <div class="missing">
+            <div class="missing-title">No GitHub profile link detected in:</div>
+            <ul>
+              {% for name in missing %}
+              <li>{{ name }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+          {% endif %}
+
+          <button class="primary" type="submit">Run Scoring</button>
+        </form>
+      </section>
+
+      <section class="panel subtle">
+        <h2>How it works</h2>
+        <div class="steps">
+          <div>
+            <span>1</span>
+            <p>Extract GitHub profile links from PDFs.</p>
+          </div>
+          <div>
+            <span>2</span>
+            <p>Fetch repository evidence (API or HTML fallback).</p>
+          </div>
+          <div>
+            <span>3</span>
+            <p>Score Engineering, Impact, Activity, and AI Productivity.</p>
+          </div>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,18 @@
+github:
+  token_env: GITHUB_TOKEN
+  cache_ttl_hours: 24
+  per_handle_max_repos: 12
+  request_timeout_sec: 20
+scoring:
+  weights:
+    engineering: 40
+    impact: 30
+    activity: 15
+    ai_productivity: 15
+activity:
+  window_days: 90
+resume_samples:
+  enable_storage: true
+  store_full_text: false
+output:
+  top_n: 10
