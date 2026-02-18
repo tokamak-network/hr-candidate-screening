@@ -18,6 +18,14 @@
         <div class="brand">Layer2 Screening</div>
         <h1>Scoring Results</h1>
         <p>Run directory: {{ run_dir }}</p>
+        <div class="actions">
+          <a class="ghost" href="/">New Run</a>
+          <a class="ghost" href="/download/{{ run_id }}/scores.csv">Download scores.csv</a>
+          <a class="ghost" href="/download/{{ run_id }}/top_report.md">Download top_report.md</a>
+          <a class="ghost" href="/download/{{ run_id }}/profiles.jsonl">Download profiles.jsonl</a>
+          <a class="ghost" href="/download/{{ run_id }}/batch_summary.jsonl">Download batch_summary.jsonl</a>
+          <a class="ghost" href="/download/{{ run_id }}/extracted_links.csv">Download extracted_links.csv</a>
+        </div>
       </header>
 
       <section class="panel">
@@ -58,14 +66,6 @@
           </div>
         </div>
         {% endif %}
-        <div class="actions">
-          <a class="ghost" href="/">New Run</a>
-          <a class="ghost" href="/download/{{ run_id }}/scores.csv">Download scores.csv</a>
-          <a class="ghost" href="/download/{{ run_id }}/top_report.md">Download top_report.md</a>
-          <a class="ghost" href="/download/{{ run_id }}/profiles.jsonl">Download profiles.jsonl</a>
-          <a class="ghost" href="/download/{{ run_id }}/batch_summary.jsonl">Download batch_summary.jsonl</a>
-          <a class="ghost" href="/download/{{ run_id }}/extracted_links.csv">Download extracted_links.csv</a>
-        </div>
 
         <div class="table-scroll">
         <table>
