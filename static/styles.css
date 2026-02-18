@@ -20,7 +20,7 @@ body {
 }
 
 .shell {
-  max-width: 1100px;
+  max-width: 1400px;
   margin: 0 auto;
   padding: 32px 24px 64px;
 }
@@ -189,19 +189,25 @@ textarea {
   font-weight: 600;
 }
 
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 table {
   width: 100%;
+  min-width: 900px;
   border-collapse: collapse;
   font-size: 14px;
-  table-layout: fixed;
+  table-layout: auto;
 }
 
 th, td {
-  padding: 12px 10px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--line);
   text-align: left;
   vertical-align: top;
-  word-break: break-word;
+  white-space: nowrap;
 }
 
 th {
@@ -209,16 +215,35 @@ th {
   font-weight: 600;
 }
 
+td.wrap {
+  white-space: normal;
+}
+
+.col-candidate { min-width: 120px; }
+.col-source    { min-width: 130px; white-space: normal; word-break: break-word; }
+.col-handle    { min-width: 100px; }
+.col-score     { min-width: 60px; text-align: center; }
+.col-total     { min-width: 60px; text-align: center; }
+.col-rationale { min-width: 260px; max-width: 360px; white-space: normal; }
+
 .total {
   font-weight: 700;
   color: var(--accent);
 }
 
 .rationale {
-  white-space: normal;
-  max-width: 360px;
   color: var(--muted);
+  font-size: 12px;
   line-height: 1.4;
+}
+
+.rationale-row {
+  padding: 3px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.rationale-row:last-child {
+  border-bottom: none;
 }
 
 @media (max-width: 700px) {

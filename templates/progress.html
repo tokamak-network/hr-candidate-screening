@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Processing...</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=IBM+Plex+Serif:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+    <style>
+      .progress-wrap {
+        max-width: 520px;
+        margin: 80px auto;
+        text-align: center;
+      }
+      .progress-bar-bg {
+        background: var(--line);
+        border-radius: 999px;
+        height: 12px;
+        margin: 24px 0 12px;
+        overflow: hidden;
+      }
+      .progress-bar-fill {
+        background: var(--accent);
+        height: 100%;
+        border-radius: 999px;
+        transition: width 0.4s ease;
+        width: 0%;
+      }
+      .progress-label {
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .spinner {
+        display: inline-block;
+        width: 40px;
+        height: 40px;
+        border: 4px solid var(--line);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-bottom: 20px;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <div class="brand">Layer2 Screening</div>
+        <h1>Scoring in Progress</h1>
+      </header>
+      <section class="panel">
+        <div class="progress-wrap">
+          <div class="spinner"></div>
+          <p>GitHub 데이터를 수집하고 점수를 계산하는 중입니다.</p>
+          <div class="progress-bar-bg">
+            <div class="progress-bar-fill" id="bar"></div>
+          </div>
+          <div class="progress-label" id="label">0 / {{ total }} 완료</div>
+        </div>
+      </section>
+    </div>
+    <script>
+      const jobId = "{{ job_id }}";
+      const total = {{ total }};
+
+      function poll() {
+        fetch("/progress/" + jobId)
+          .then(r => r.json())
+          .then(data => {
+            const done = data.done || 0;
+            const pct = total > 0 ? Math.round(done / total * 100) : 0;
+            document.getElementById("bar").style.width = pct + "%";
+            document.getElementById("label").textContent = done + " / " + total + " 완료";
+
+            if (data.status === "done") {
+              window.location.href = "/results?run_dir=" + encodeURIComponent(data.run_dir);
+            } else if (data.status === "error") {
+              document.querySelector("p").textContent = "오류가 발생했습니다. 서버 로그를 확인해주세요.";
+            } else {
+              setTimeout(poll, 1500);
+            }
+          })
+          .catch(() => setTimeout(poll, 2000));
+      }
+
+      poll();
+    </script>
+  </body>
+</html>

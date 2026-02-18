@@ -19,12 +19,16 @@ def _score_engineering(f):
         score += 10
     if f.get("has_tests"):
         score += 10
-    if len(f.get("languages", [])) >= 2:
-        score += 8
+    # Language diversity: 1 lang=4, 2=8(same as before), 3+=10
+    lang_count = len(f.get("languages", []))
+    score += _cap(lang_count * 4, 10)
     if f.get("readme_with_install"):
         score += 6
-    activity_points = _cap((f.get("recent_commits", 0) + f.get("recent_prs", 0)) // 10, 6)
+    # Activity bonus: halved divisor for more sensitivity
+    activity_points = _cap((f.get("recent_commits", 0) + f.get("recent_prs", 0)) // 5, 6)
     score += activity_points
+    # Job fit bonus: reward tech stack alignment with JD
+    score += _cap(f.get("job_fit_count", 0) * 2, 6)
     return _cap(score, 40)
 
 
@@ -32,8 +36,10 @@ def _score_impact(f):
     score = 0
     stars = f.get("total_stars", 0)
     forks = f.get("total_forks", 0)
-    score += _cap(stars // 10, 12)
-    score += _cap(forks // 5, 6)
+    # Halved threshold: 1pt per 5 stars (was per 10)
+    score += _cap(stars // 5, 12)
+    # Lowered fork threshold: 1pt per 3 forks (was per 5)
+    score += _cap(forks // 3, 6)
     if f.get("recent_prs", 0) > 3:
         score += 6
     return _cap(score, 30)
@@ -42,7 +48,8 @@ def _score_impact(f):
 def _score_activity(f):
     score = 0
     total_activity = f.get("recent_commits", 0) + f.get("recent_prs", 0) + f.get("recent_issues", 0)
-    score += _cap(total_activity // 5, 10)
+    # Lowered threshold: 1pt per 3 events (was per 5)
+    score += _cap(total_activity // 3, 10)
     weekly = f.get("weekly_activity", [])
     if weekly:
         active_weeks = sum(1 for v in weekly if v > 0)

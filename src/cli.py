@@ -4,6 +4,8 @@ import csv
 import json
 import os
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from config import load_config, merge_config
 from datasets import append_derived_features, append_labels, ensure_dataset_dir
@@ -56,6 +58,7 @@ def run_pipeline(
     config_path,
     store_full_resume=False,
     config_overrides=None,
+    progress_callback=None,
 ):
     config = load_config(config_path)
     config = merge_config(config, config_overrides)
@@ -82,63 +85,86 @@ def run_pipeline(
     resume_rows = []
     label_rows = []
     batch_summaries = []
+    lock = threading.Lock()
 
     activity_window_days = config.get("activity", {}).get("window_days", 90)
 
     processing_config = config.get("processing", {})
     batch_size = int(processing_config.get("batch_size", 20))
     deviation_threshold = float(processing_config.get("batch_deviation_threshold", 0.2))
+    parallel_workers = int(processing_config.get("parallel_workers", 8))
     if batch_size <= 0:
         batch_size = max(1, len(candidates))
 
+    scoring_weights = config.get("scoring", {}).get("weights", {})
+
+    def _process_candidate(candidate, batch_index):
+        handle = candidate.get("handle")
+        if not handle:
+            return None
+        github_data = get_github_data(
+            handle,
+            client=client,
+            scraper=scraper,
+            cache_ttl_hours=cache_ttl_hours,
+            max_repos=max_repos,
+            activity_window_days=activity_window_days,
+        )
+        features = extract_features(github_data, activity_window_days=activity_window_days)
+        job_fit = derive_job_fit(job_keywords, github_data, features)
+        features["job_fit_count"] = len(job_fit)
+        scores = score_candidate(features, scoring_weights)
+        display_id = _candidate_display_id(candidate)
+        profile = {
+            "candidate_id": display_id,
+            "candidate_name": candidate.get("candidate_name"),
+            "source_file": candidate.get("source_file"),
+            "handle": handle,
+            "batch_id": batch_index,
+            "job_fit": job_fit,
+            "evidence": {
+                "top_repos": features.get("top_repos"),
+                "languages": features.get("languages"),
+                "readme_with_install": features.get("readme_with_install"),
+                "ci_present": features.get("has_ci"),
+                "tests_present": features.get("has_tests"),
+                "activity_summary": _activity_summary(features),
+            },
+            "scores": scores,
+            "score_rationale": build_rationale(features, scores),
+        }
+        valid, _ = validate_profile(profile)
+        if not valid:
+            return None
+        dataset_payload = build_resume_dataset_payload(candidate, config)
+        return profile, dataset_payload
+
+    progress = {"done": 0, "total": len(candidates)}
+    if progress_callback:
+        progress_callback(0, len(candidates))
+
     for batch_index, batch in enumerate(_chunked(candidates, batch_size), start=1):
         batch_profiles = []
-        for candidate in batch:
-            handle = candidate.get("handle")
-            if not handle:
-                continue
-            github_data = get_github_data(
-                handle,
-                client=client,
-                scraper=scraper,
-                cache_ttl_hours=cache_ttl_hours,
-                max_repos=max_repos,
-                activity_window_days=activity_window_days,
-            )
-            features = extract_features(github_data, activity_window_days=activity_window_days)
-            scores = score_candidate(features, config.get("scoring", {}).get("weights", {}))
-            job_fit = derive_job_fit(job_keywords, github_data, features)
-
-            display_id = _candidate_display_id(candidate)
-            profile = {
-                "candidate_id": display_id,
-                "candidate_name": candidate.get("candidate_name"),
-                "source_file": candidate.get("source_file"),
-                "handle": handle,
-                "batch_id": batch_index,
-                "job_fit": job_fit,
-                "evidence": {
-                    "top_repos": features.get("top_repos"),
-                    "languages": features.get("languages"),
-                    "readme_with_install": features.get("readme_with_install"),
-                    "ci_present": features.get("has_ci"),
-                    "tests_present": features.get("has_tests"),
-                    "activity_summary": _activity_summary(features),
-                },
-                "scores": scores,
-                "score_rationale": build_rationale(features, scores),
+        with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
+            futures = {
+                executor.submit(_process_candidate, c, batch_index): c
+                for c in batch
             }
-            valid, _ = validate_profile(profile)
-            if not valid:
-                continue
-            profiles.append(profile)
-            batch_profiles.append(profile)
-
-            dataset_payload = build_resume_dataset_payload(candidate, config)
-            if dataset_payload:
-                resume_rows.append(dataset_payload["derived"])
-                if dataset_payload.get("label"):
-                    label_rows.append(dataset_payload["label"])
+            for future in as_completed(futures):
+                result = future.result()
+                if result is None:
+                    continue
+                profile, dataset_payload = result
+                with lock:
+                    profiles.append(profile)
+                    batch_profiles.append(profile)
+                    progress["done"] += 1
+                    if progress_callback:
+                        progress_callback(progress["done"], progress["total"])
+                    if dataset_payload:
+                        resume_rows.append(dataset_payload["derived"])
+                        if dataset_payload.get("label"):
+                            label_rows.append(dataset_payload["label"])
 
         batch_summaries.append(
             _batch_summary(batch_profiles, batch_index, deviation_threshold)
@@ -221,13 +247,17 @@ def get_github_data(
 ):
     cache_path = os.path.join("cache", "github", f"{handle}.json")
     cached = _read_cache(cache_path, cache_ttl_hours)
+    # If we now have an API token but the cache was collected via HTML scraper,
+    # discard the stale cache and re-fetch with full API data.
+    if cached and client and cached.get("source") == "html":
+        cached = None
     if cached:
         return cached
 
     if client:
         data = _collect_from_api(handle, client, max_repos, activity_window_days)
     else:
-        data = _collect_from_html(handle, scraper, max_repos)
+        data = _collect_from_html(handle, scraper, max_repos, activity_window_days)
 
     if data:
         _write_cache(cache_path, data)
@@ -378,11 +408,36 @@ def _collect_activity(handle, client, window_days):
     }
 
 
-def _collect_from_html(handle, scraper, max_repos):
+def _collect_from_html(handle, scraper, max_repos, activity_window_days=90):
     if not scraper:
         return None
     user = scraper.get_user(handle) or {}
-    repos = scraper.get_repos(handle, max_repos=max_repos)
+    repos_raw = scraper.get_repos(handle, max_repos=max_repos)
+
+    repos = []
+    for repo in repos_raw:
+        name = repo.get("name")
+        if not name:
+            repos.append(repo)
+            continue
+        details = scraper.get_repo_details(handle, name)
+        readme_flags = analyze_readme(details.get("readme_text"))
+        combined_files = details.get("file_hints", [])
+        repo_entry = dict(repo)
+        repo_entry.update({
+            "has_readme": readme_flags.get("has_readme"),
+            "readme_has_install": readme_flags.get("readme_has_install"),
+            "readme_has_run": readme_flags.get("readme_has_run"),
+            "readme_has_test": readme_flags.get("readme_has_test"),
+            "has_tests": detect_tests(combined_files),
+            "has_ci": detect_ci(combined_files),
+            "has_scripts": detect_scripts(combined_files),
+            "has_agents": detect_ai_artifacts(combined_files, details.get("readme_text")),
+            "topics": details.get("topics") or repo.get("topics") or [],
+        })
+        repos.append(repo_entry)
+
+    activity = scraper.get_activity(handle, window_days=activity_window_days)
     return {
         "handle": handle,
         "fetched_at": now_iso_html(),
@@ -395,14 +450,7 @@ def _collect_from_html(handle, scraper, max_repos):
             "followers": None,
         },
         "repos": repos,
-        "activity": {
-            "recent_commits": 0,
-            "recent_prs": 0,
-            "recent_issues": 0,
-            "small_pr_ratio": 0,
-            "issue_pr_link_ratio": 0,
-            "weekly_activity": [],
-        },
+        "activity": activity,
     }
 
 
@@ -421,36 +469,71 @@ def derive_job_fit(job_keywords, github_data, features):
 def build_rationale(features, scores):
     rationale = []
 
-    if scores.get("EngineeringScore", 0) > 0:
-        eng_bits = []
-        if features.get("has_ci"):
-            eng_bits.append("CI")
-        if features.get("has_tests"):
-            eng_bits.append("tests")
-        if features.get("readme_with_install"):
-            eng_bits.append("README install/run")
-        if features.get("recent_commits"):
-            eng_bits.append("recent commits")
-        rationale.append(
-            "Engineering: " + (", ".join(eng_bits) if eng_bits else "evidence present")
-        )
-    else:
-        rationale.append("Engineering: insufficient evidence")
+    # --- Engineering ---
+    eng = scores.get("EngineeringScore", 0)
+    ci_pts      = 10 if features.get("has_ci") else 0
+    test_pts    = 10 if features.get("has_tests") else 0
+    langs       = features.get("languages", [])
+    lang_pts    = min(len(langs) * 4, 10)
+    readme_pts  = 6 if features.get("readme_with_install") else 0
+    act_raw     = features.get("recent_commits", 0) + features.get("recent_prs", 0)
+    act_pts     = min(act_raw // 5, 6)
+    jf_count    = features.get("job_fit_count", 0)
+    jf_pts      = min(jf_count * 2, 6)
 
-    if scores.get("ImpactScore", 0) > 0:
-        rationale.append("Impact: stars/forks or meaningful PR activity")
-    else:
-        rationale.append("Impact: insufficient evidence")
+    lang_str = "/".join(langs[:4]) if langs else "none"
+    eng_parts = [
+        f"CI({'✓' if ci_pts else '✗'}){f'(+{ci_pts})' if ci_pts else '(+0)'}",
+        f"Tests({'✓' if test_pts else '✗'}){f'(+{test_pts})' if test_pts else '(+0)'}",
+        f"langs {len(langs)} [{lang_str}](+{lang_pts})",
+        f"README({'✓' if readme_pts else '✗'})(+{readme_pts})",
+        f"activity {act_raw} events(+{act_pts})",
+        f"JD fit {jf_count} keywords(+{jf_pts})",
+    ]
+    rationale.append(f"Engineering {eng}/40: " + " | ".join(eng_parts))
 
-    if scores.get("ActivityScore", 0) > 0:
-        rationale.append("Activity: recent commits/PRs/issues")
-    else:
-        rationale.append("Activity: insufficient evidence")
+    # --- Impact ---
+    imp = scores.get("ImpactScore", 0)
+    stars   = features.get("total_stars", 0)
+    forks   = features.get("total_forks", 0)
+    prs     = features.get("recent_prs", 0)
+    star_pts = min(stars // 5, 12)
+    fork_pts = min(forks // 3, 6)
+    pr_pts   = 6 if prs > 3 else 0
+    rationale.append(
+        f"Impact {imp}/30: "
+        f"stars {stars}(+{star_pts}) | forks {forks}(+{fork_pts}) | recent PRs {prs}(+{pr_pts})"
+    )
 
-    if scores.get("AIProductivityScore", 0) > 0:
-        rationale.append("AIProductivity: automation signals or doc clarity")
-    else:
-        rationale.append("AIProductivity: insufficient evidence")
+    # --- Activity ---
+    act_score = scores.get("ActivityScore", 0)
+    commits  = features.get("recent_commits", 0)
+    issues   = features.get("recent_issues", 0)
+    total_ev = commits + prs + issues
+    ev_pts   = min(total_ev // 3, 10)
+    weekly   = features.get("weekly_activity", [])
+    active_w = sum(1 for v in weekly if v > 0)
+    wk_pts   = min(active_w // 2, 5)
+    rationale.append(
+        f"Activity {act_score}/15: "
+        f"{commits} commits / {prs} PRs / {issues} issues(+{ev_pts}) | "
+        f"{active_w} active weeks(+{wk_pts})"
+    )
+
+    # --- AI Productivity ---
+    ai_score   = scores.get("AIProductivityScore", 0)
+    auto_sig   = features.get("automation_signals", 0)
+    auto_pts   = min(auto_sig * 3, 7)
+    spr        = features.get("small_pr_ratio", 0)
+    spr_pts    = min(int(spr * 4), 4)
+    rdm_pts    = 3 if features.get("readme_with_install") else 0
+    ai_art_pts = 1 if features.get("ai_artifact_bonus") else 0
+    rationale.append(
+        f"AI {ai_score}/15: "
+        f"automation ×{auto_sig}(+{auto_pts}) | "
+        f"small PR ratio {round(spr*100)}%(+{spr_pts}) | "
+        f"README(+{rdm_pts}) | AI artifacts(+{ai_art_pts})"
+    )
 
     return rationale
 

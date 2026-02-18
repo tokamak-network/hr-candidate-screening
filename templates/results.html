@@ -24,6 +24,7 @@
         {% if batch_summary %}
         <div class="batch-summary">
           <h2>Batch Summary</h2>
+          <div class="table-scroll">
           <table>
             <thead>
               <tr>
@@ -34,7 +35,7 @@
                 <th>Avg Impact</th>
                 <th>Avg Activity</th>
                 <th>Avg AI</th>
-                <th>Deviation Flag</th>
+                <th>Deviation</th>
               </tr>
             </thead>
             <tbody>
@@ -48,16 +49,13 @@
                 <td>{{ summary.avg_activity }}</td>
                 <td>{{ summary.avg_ai_productivity }}</td>
                 <td>
-                  {% if summary.deviation_flag %}
-                    ⚠️
-                  {% else %}
-                    OK
-                  {% endif %}
+                  {% if summary.deviation_flag %}⚠️{% else %}OK{% endif %}
                 </td>
               </tr>
               {% endfor %}
             </tbody>
           </table>
+          </div>
         </div>
         {% endif %}
         <div class="actions">
@@ -69,36 +67,42 @@
           <a class="ghost" href="/download/{{ run_id }}/extracted_links.csv">Download extracted_links.csv</a>
         </div>
 
+        <div class="table-scroll">
         <table>
           <thead>
             <tr>
-              <th>Candidate</th>
-              <th>Source</th>
-              <th>Handle</th>
-              <th>Engineering (40)</th>
-              <th>Impact (30)</th>
-              <th>Activity (15)</th>
-              <th>AI Productivity (15)</th>
-              <th>Total</th>
-              <th>Rationale</th>
+              <th class="col-candidate">Candidate</th>
+              <th class="col-source">Source</th>
+              <th class="col-handle">Handle</th>
+              <th class="col-score">Eng (40)</th>
+              <th class="col-score">Impact (30)</th>
+              <th class="col-score">Activity (15)</th>
+              <th class="col-score">AI (15)</th>
+              <th class="col-total">Total</th>
+              <th class="col-rationale">Rationale</th>
             </tr>
           </thead>
           <tbody>
             {% for row in scores %}
             <tr>
-              <td>{{ row.candidate_name or row.candidate_id }}</td>
-              <td>{{ row.source_file or "-" }}</td>
-              <td>{{ row.handle }}</td>
-              <td>{{ row.EngineeringScore }}</td>
-              <td>{{ row.ImpactScore }}</td>
-              <td>{{ row.ActivityScore }}</td>
-              <td>{{ row.AIProductivityScore }}</td>
-              <td class="total">{{ row.TotalScore }}</td>
-              <td class="rationale">{{ row.score_rationale }}</td>
+              <td class="col-candidate">{{ row.candidate_name or row.candidate_id }}</td>
+              <td class="col-source">{{ row.source_file or "-" }}</td>
+              <td class="col-handle">{{ row.handle }}</td>
+              <td class="col-score">{{ row.EngineeringScore }}</td>
+              <td class="col-score">{{ row.ImpactScore }}</td>
+              <td class="col-score">{{ row.ActivityScore }}</td>
+              <td class="col-score">{{ row.AIProductivityScore }}</td>
+              <td class="col-total total">{{ row.TotalScore }}</td>
+              <td class="col-rationale rationale">
+                {% for part in row.score_rationale.split('\n') %}
+                  <div class="rationale-row">{{ part }}</div>
+                {% endfor %}
+              </td>
             </tr>
             {% endfor %}
           </tbody>
         </table>
+        </div>
       </section>
 
       {% if extracted_links %}

@@ -2,10 +2,12 @@ import csv
 import json
 import os
 import re
+import threading
 import time
+import uuid
 from io import BytesIO
 
-from flask import Flask, redirect, render_template, request, send_file, url_for
+from flask import Flask, jsonify, redirect, render_template, request, send_file, url_for
 
 from cli import run_pipeline
 
@@ -15,6 +17,10 @@ TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
 app = Flask(__name__, template_folder=TEMPLATES_DIR, static_folder=STATIC_DIR)
+
+# In-memory job store: job_id -> {status, done, total, run_dir, error}
+JOBS = {}
+JOBS_LOCK = threading.Lock()
 
 
 @app.route("/", methods=["GET"])
@@ -55,15 +61,63 @@ def run_scoring():
         except ValueError:
             config_overrides = None
 
-    result = run_pipeline(
-        candidates_path,
-        job_path,
-        config_path,
-        store_full_resume=False,
-        config_overrides=config_overrides,
-    )
-    write_extracted_links_csv(result["run_dir"], link_rows)
-    return redirect(url_for("results", run_dir=result["run_dir"]))
+    job_id = uuid.uuid4().hex
+    with JOBS_LOCK:
+        JOBS[job_id] = {"status": "running", "done": 0, "total": len(handles), "run_dir": None, "error": None}
+
+    def _run():
+        try:
+            def on_progress(done, total):
+                with JOBS_LOCK:
+                    JOBS[job_id]["done"] = done
+                    JOBS[job_id]["total"] = total
+
+            result = run_pipeline(
+                candidates_path,
+                job_path,
+                config_path,
+                store_full_resume=False,
+                config_overrides=config_overrides,
+                progress_callback=on_progress,
+            )
+            write_extracted_links_csv(result["run_dir"], link_rows)
+            with JOBS_LOCK:
+                JOBS[job_id]["status"] = "done"
+                JOBS[job_id]["run_dir"] = result["run_dir"]
+        except Exception as exc:
+            with JOBS_LOCK:
+                JOBS[job_id]["status"] = "error"
+                JOBS[job_id]["error"] = str(exc)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return redirect(url_for("job_status", job_id=job_id))
+
+
+@app.route("/status/<job_id>")
+def job_status(job_id):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+    if not job:
+        return redirect(url_for("index"))
+    if job["status"] == "done":
+        return redirect(url_for("results", run_dir=job["run_dir"]))
+    if job["status"] == "error":
+        return render_template("index.html", error=f"Pipeline error: {job['error']}")
+    return render_template("progress.html", job_id=job_id, total=job["total"])
+
+
+@app.route("/progress/<job_id>")
+def job_progress(job_id):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+    if not job:
+        return jsonify({"status": "unknown"})
+    return jsonify({
+        "status": job["status"],
+        "done": job["done"],
+        "total": job["total"],
+        "run_dir": job.get("run_dir"),
+    })
 
 
 @app.route("/results", methods=["GET"])
@@ -129,6 +183,7 @@ def extract_handles_from_files(files):
     source_map = {}
     missing = []
     link_rows = []
+    files_with_handle = set()  # track files that already yielded a handle
 
     for file_storage in files:
         name = file_storage.filename or "uploaded.pdf"
@@ -199,9 +254,12 @@ def extract_handles_from_files(files):
             )
 
             if link_type == "profile" and handle:
-                if handle.lower() not in [h.lower() for h in handles]:
-                    handles.append(handle)
-                    source_map[handle] = name
+                # Only use the first profile handle found per PDF
+                if name not in files_with_handle:
+                    if handle.lower() not in [h.lower() for h in handles]:
+                        handles.append(handle)
+                        source_map[handle] = name
+                    files_with_handle.add(name)
                 found_handle = True
         if not found_handle:
             missing.append(name)
@@ -270,7 +328,7 @@ def read_scores(path, profiles_path=None):
         for row in reader:
             profile = profile_by_handle.get(row.get("handle")) or {}
             rationale = profile.get("score_rationale") or []
-            row["score_rationale"] = " | ".join(rationale)
+            row["score_rationale"] = "\n".join(rationale)
             if not row.get("candidate_name"):
                 row["candidate_name"] = profile.get("candidate_name")
             rows.append(row)
