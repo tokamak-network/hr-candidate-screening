@@ -123,7 +123,7 @@
               <td>{{ link.source_file }}</td>
               <td>{{ link.link_type }}</td>
               <td>{{ link.handle or "-" }}</td>
-              <td>{{ link.url }}</td>
+              <td><a href="{{ link.url }}" target="_blank" rel="noopener noreferrer">{{ link.url }}</a></td>
             </tr>
             {% endfor %}
           </tbody>
